@@ -160,6 +160,27 @@
                 <label for="custom-analysis-prompt" class="block text-sm font-medium text-gray-700">Análise Solicitada (Perguntas)</label>
                 <textarea id="custom-analysis-prompt" rows="6" class="form-textarea mt-1"></textarea>
             </div>
+            <div class="border-t pt-4">
+                <h4 class="text-sm font-medium text-gray-700 mb-2">Configurações de Desenvolvimento</h4>
+                <div class="space-y-2">
+                    <div class="flex items-center">
+                        <input id="debug-mode-toggle" type="checkbox" class="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500">
+                        <label for="debug-mode-toggle" class="ml-2 block text-sm text-gray-700">Modo Debug (Logs detalhados)</label>
+                    </div>
+                    <div class="flex items-center">
+                        <input id="auto-save-toggle" type="checkbox" class="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500" checked>
+                        <label for="auto-save-toggle" class="ml-2 block text-sm text-gray-700">Auto-salvar configurações</label>
+                    </div>
+                    <div class="pt-2">
+                        <button id="export-config-btn" type="button" class="text-xs text-indigo-600 hover:text-indigo-800">
+                            📋 Exportar Config
+                        </button>
+                        <button id="clear-logs-btn" type="button" class="text-xs text-red-600 hover:text-red-800 ml-4">
+                            🗑️ Limpar Logs
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
         <div class="mt-8 flex justify-end space-x-3">
             <button id="cancel-settings-btn" class="btn bg-gray-200 text-gray-700 hover:bg-gray-300">Cancelar</button>
@@ -169,6 +190,222 @@
 
 
     <script>
+        // --- Configuration Management ---
+        const CONFIG = {
+            // API Configuration
+            API_ENDPOINTS: {
+                GEMINI: 'https://generativelanguage.googleapis.com/v1beta',
+                OPENAI: 'https://api.openai.com/v1'
+            },
+            
+            // File Upload Limits
+            MAX_FILE_SIZE: 10 * 1024 * 1024, // 10MB
+            MAX_FILES: 10,
+            ALLOWED_IMAGE_TYPES: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+            
+            // UI Configuration
+            DEBUG_MODE: false,
+            AUTO_SAVE_DELAY: 1000, // 1 second
+            
+            // Error Messages
+            ERROR_MESSAGES: {
+                NETWORK_ERROR: 'Problema de conexão. Verifique sua internet e tente novamente.',
+                API_KEY_INVALID: 'Chave de API inválida ou inativa. Verifique suas credenciais.',
+                API_RATE_LIMIT: 'Muitas consultas. Aguarde um momento e tente novamente.',
+                FILE_TOO_LARGE: 'Arquivo muito grande. Tamanho máximo: 10MB.',
+                FILE_TYPE_INVALID: 'Tipo de arquivo não suportado. Use apenas imagens.',
+                NO_IMAGES: 'Selecione pelo menos uma imagem da peça.',
+                NO_DATA: 'Preencha pelo menos uma informação sobre a peça.',
+                API_RESPONSE_ERROR: 'Erro na resposta da API. Tente novamente.',
+                WORKER_ERROR: 'Erro ao processar imagens. Tente novamente.',
+                UNKNOWN_ERROR: 'Erro inesperado. Tente novamente em alguns minutos.'
+            },
+            
+            // Status Messages
+            STATUS_MESSAGES: {
+                PROCESSING_IMAGES: 'Processando imagens...',
+                SENDING_TO_AI: 'Enviando para a IA...',
+                AI_THINKING: 'A IA está pensando...',
+                VALIDATING_KEY: 'Verificando...',
+                KEY_VALID: 'Chave de API válida!',
+                KEY_INVALID: 'Chave de API inválida ou problema de rede.'
+            }
+        };
+
+        // --- Error Handling Utilities ---
+        class AppError extends Error {
+            constructor(message, type, details = null) {
+                super(message);
+                this.name = 'AppError';
+                this.type = type;
+                this.details = details;
+                this.timestamp = new Date().toISOString();
+            }
+        }
+
+        class APIError extends AppError {
+            constructor(message, status, provider, response = null) {
+                super(message, 'API_ERROR');
+                this.name = 'APIError';
+                this.status = status;
+                this.provider = provider;
+                this.response = response;
+            }
+        }
+
+        class ValidationError extends AppError {
+            constructor(message, field = null) {
+                super(message, 'VALIDATION_ERROR');
+                this.name = 'ValidationError';
+                this.field = field;
+            }
+        }
+
+        // --- Logging Utility ---
+        const Logger = {
+            error: (message, error = null, context = {}) => {
+                const logData = {
+                    message,
+                    error: error ? {
+                        name: error.name,
+                        message: error.message,
+                        stack: error.stack,
+                        ...error
+                    } : null,
+                    context,
+                    timestamp: new Date().toISOString(),
+                    userAgent: navigator.userAgent
+                };
+                
+                console.error('🚨 [ERROR]', logData);
+                
+                // In production, you could send this to an external logging service
+                if (CONFIG.DEBUG_MODE) {
+                    console.group('🔍 Debug Info');
+                    console.log('Context:', context);
+                    console.log('Full Error:', error);
+                    console.groupEnd();
+                }
+            },
+            
+            warn: (message, data = null) => {
+                console.warn('⚠️ [WARN]', message, data);
+            },
+            
+            info: (message, data = null) => {
+                console.log('ℹ️ [INFO]', message, data);
+            },
+            
+            debug: (message, data = null) => {
+                if (CONFIG.DEBUG_MODE) {
+                    console.log('🐛 [DEBUG]', message, data);
+                }
+            }
+        };
+
+        // --- Error Handler ---
+        const ErrorHandler = {
+            handle: (error, context = {}) => {
+                Logger.error('Application error occurred', error, context);
+                
+                let userMessage = CONFIG.ERROR_MESSAGES.UNKNOWN_ERROR;
+                
+                if (error instanceof APIError) {
+                    switch (error.status) {
+                        case 401:
+                            userMessage = CONFIG.ERROR_MESSAGES.API_KEY_INVALID;
+                            break;
+                        case 429:
+                            userMessage = CONFIG.ERROR_MESSAGES.API_RATE_LIMIT;
+                            break;
+                        default:
+                            userMessage = `Erro da API ${error.provider}: ${error.message}`;
+                    }
+                } else if (error instanceof ValidationError) {
+                    userMessage = error.message;
+                } else if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+                    userMessage = CONFIG.ERROR_MESSAGES.NETWORK_ERROR;
+                } else if (error.message.includes('API')) {
+                    userMessage = error.message;
+                }
+                
+                return userMessage;
+            },
+            
+            showUserError: (message, duration = 5000) => {
+                // Create a temporary error notification
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'fixed top-4 right-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded z-50 shadow-lg';
+                errorDiv.innerHTML = `
+                    <div class="flex items-center">
+                        <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                        </svg>
+                        <span>${message}</span>
+                    </div>
+                `;
+                
+                document.body.appendChild(errorDiv);
+                
+                setTimeout(() => {
+                    errorDiv.remove();
+                }, duration);
+            }
+        };
+
+        // --- Validation Utilities ---
+        const Validator = {
+            validateApiKey: (apiKey) => {
+                if (!apiKey || apiKey.trim().length === 0) {
+                    throw new ValidationError('Chave de API é obrigatória', 'apiKey');
+                }
+                if (apiKey.length < 10) {
+                    throw new ValidationError('Chave de API parece ser muito curta', 'apiKey');
+                }
+                return true;
+            },
+            
+            validateImageFile: (file) => {
+                if (!CONFIG.ALLOWED_IMAGE_TYPES.includes(file.type)) {
+                    throw new ValidationError(
+                        `Tipo de arquivo não suportado: ${file.type}. Use apenas: ${CONFIG.ALLOWED_IMAGE_TYPES.join(', ')}`,
+                        'fileType'
+                    );
+                }
+                
+                if (file.size > CONFIG.MAX_FILE_SIZE) {
+                    throw new ValidationError(
+                        `Arquivo muito grande: ${(file.size / 1024 / 1024).toFixed(1)}MB. Máximo: ${CONFIG.MAX_FILE_SIZE / 1024 / 1024}MB`,
+                        'fileSize'
+                    );
+                }
+                
+                return true;
+            },
+            
+            validateFormData: (formData) => {
+                const errors = [];
+                
+                if (!formData.apiKey) {
+                    errors.push('Chave de API é obrigatória');
+                }
+                
+                if (!formData.images || formData.images.length === 0) {
+                    errors.push(CONFIG.ERROR_MESSAGES.NO_IMAGES);
+                }
+                
+                if (!formData.hasData) {
+                    errors.push(CONFIG.ERROR_MESSAGES.NO_DATA);
+                }
+                
+                if (errors.length > 0) {
+                    throw new ValidationError(errors.join('. '), 'form');
+                }
+                
+                return true;
+            }
+        };
+
         // --- DOM Elements ---
         const formFieldsContainer = document.getElementById('form-fields-container');
         const addFieldBtn = document.getElementById('add-field-btn');
@@ -193,6 +430,8 @@
         const cancelSettingsBtn = document.getElementById('cancel-settings-btn');
         const customPersonaPrompt = document.getElementById('custom-persona-prompt');
         const customAnalysisPrompt = document.getElementById('custom-analysis-prompt');
+        const debugModeToggle = document.getElementById('debug-mode-toggle');
+        const autoSaveToggle = document.getElementById('auto-save-toggle');
         const followUpForm = document.getElementById('follow-up-form');
         const followUpInput = document.getElementById('follow-up-input');
         const statusContainer = document.getElementById('status-container');
@@ -276,6 +515,12 @@
             if (show) {
                 customPersonaPrompt.value = localStorage.getItem('customPersonaPrompt') || DEFAULT_PERSONA_PROMPT;
                 customAnalysisPrompt.value = localStorage.getItem('customAnalysisPrompt') || DEFAULT_ANALYSIS_PROMPT;
+                debugModeToggle.checked = localStorage.getItem('debugMode') === 'true';
+                autoSaveToggle.checked = localStorage.getItem('autoSave') !== 'false'; // Default to true
+                
+                // Update CONFIG based on loaded settings
+                CONFIG.DEBUG_MODE = debugModeToggle.checked;
+                
                 settingsModalOverlay.classList.remove('hidden');
                 settingsModal.classList.remove('hidden');
                 setTimeout(() => {
@@ -315,23 +560,35 @@
                 statusIcon.textContent = '';
                 return;
             }
-            statusIcon.textContent = 'Verificando...';
+            
             try {
+                // Basic validation first
+                Validator.validateApiKey(apiKey);
+                
+                statusIcon.textContent = CONFIG.STATUS_MESSAGES.VALIDATING_KEY;
+                
                 if (providerName === "Google Gemini") {
-                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
-                    if (!response.ok) throw new Error('Chave inválida ou problema de rede.');
+                    const response = await fetch(`${CONFIG.API_ENDPOINTS.GEMINI}/models?key=${apiKey}`);
+                    if (!response.ok) {
+                        throw new APIError('Chave inválida ou problema de rede.', response.status, 'Gemini', response);
+                    }
                 } else if (providerName === "OpenAI") {
-                    const response = await fetch('https://api.openai.com/v1/models', {
+                    const response = await fetch(`${CONFIG.API_ENDPOINTS.OPENAI}/models`, {
                         headers: { 'Authorization': `Bearer ${apiKey}` }
                     });
-                    if (!response.ok) throw new Error('Chave inválida ou problema de rede.');
+                    if (!response.ok) {
+                        throw new APIError('Chave inválida ou problema de rede.', response.status, 'OpenAI', response);
+                    }
                 }
+                
                 statusIcon.textContent = '✔️';
-                statusIcon.title = 'Chave de API válida!';
+                statusIcon.title = CONFIG.STATUS_MESSAGES.KEY_VALID;
+                Logger.info('API key validation successful', { provider: providerName });
+                
             } catch (error) {
                 statusIcon.textContent = '❌';
-                statusIcon.title = 'Chave de API inválida ou problema de rede.';
-                console.error("Erro na validação da chave:", error);
+                statusIcon.title = CONFIG.STATUS_MESSAGES.KEY_INVALID;
+                Logger.error('API key validation failed', error, { provider: providerName, apiKey: apiKey.substring(0, 10) + '...' });
             }
         };
 
@@ -365,11 +622,12 @@
         
         const handleImagePreview = (event) => {
             const files = Array.from(event.target.files);
-            const maxSize = 10 * 1024 * 1024; // 10MB
             
             for (const file of files) {
-                if (file.size > maxSize) {
-                    alert(`A imagem "${file.name}" é muito grande. O tamanho máximo permitido é 10MB.`);
+                try {
+                    Validator.validateImageFile(file);
+                } catch (error) {
+                    ErrorHandler.showUserError(error.message);
                     event.target.value = ''; // Limpa a seleção
                     return;
                 }
@@ -398,33 +656,47 @@
         };
 
         async function callGeminiAPI(apiKey, model, history) {
-            const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+            const API_URL = `${CONFIG.API_ENDPOINTS.GEMINI}/models/${model}:generateContent?key=${apiKey}`;
             const requestBody = { contents: history };
-            const response = await fetch(API_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(requestBody)
-            });
-            const data = await response.json(); 
-            if (!response.ok) {
-                console.error("Erro da API Gemini:", data);
-                const errorMessage = data?.error?.message || `HTTP error! status: ${response.status}`;
-                throw new Error(`Erro da API Gemini: ${errorMessage}`);
-            }
             
-            if (data.candidates && data.candidates.length > 0 && data.candidates[0].content && data.candidates[0].content.parts && data.candidates[0].content.parts.length > 0) {
-                return data.candidates[0].content.parts[0].text;
-            } else {
-                console.error("Resposta inesperada da API Gemini:", data);
-                if (data.promptFeedback && data.promptFeedback.blockReason) {
-                    throw new Error(`A API Gemini bloqueou a resposta. Motivo: ${data.promptFeedback.blockReason}`);
+            try {
+                Logger.debug('Calling Gemini API', { model, historyLength: history.length });
+                
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestBody)
+                });
+                
+                const data = await response.json(); 
+                
+                if (!response.ok) {
+                    Logger.error('Gemini API error', null, { status: response.status, data });
+                    const errorMessage = data?.error?.message || `HTTP error! status: ${response.status}`;
+                    throw new APIError(`Erro da API Gemini: ${errorMessage}`, response.status, 'Gemini', data);
                 }
-                throw new Error("A API Gemini retornou uma resposta vazia ou malformada. Verifique o console para mais detalhes.");
+                
+                if (data.candidates && data.candidates.length > 0 && data.candidates[0].content && data.candidates[0].content.parts && data.candidates[0].content.parts.length > 0) {
+                    Logger.info('Gemini API call successful', { model, responseLength: data.candidates[0].content.parts[0].text.length });
+                    return data.candidates[0].content.parts[0].text;
+                } else {
+                    Logger.error('Unexpected Gemini API response', null, { data });
+                    if (data.promptFeedback && data.promptFeedback.blockReason) {
+                        throw new APIError(`A API Gemini bloqueou a resposta. Motivo: ${data.promptFeedback.blockReason}`, 400, 'Gemini', data);
+                    }
+                    throw new APIError("A API Gemini retornou uma resposta vazia ou malformada.", 500, 'Gemini', data);
+                }
+            } catch (error) {
+                if (error instanceof APIError) {
+                    throw error;
+                }
+                Logger.error('Gemini API call failed', error, { model, apiKey: apiKey.substring(0, 10) + '...' });
+                throw new APIError(`Erro na comunicação com a API Gemini: ${error.message}`, 0, 'Gemini');
             }
         }
 
         async function callOpenAIAPI(apiKey, model, history) {
-            const API_URL = 'https://api.openai.com/v1/chat/completions';
+            const API_URL = `${CONFIG.API_ENDPOINTS.OPENAI}/chat/completions`;
             const requestBody = { model, messages: history };
             if (model.startsWith('o3')) {
                 requestBody.max_completion_tokens = 2048;
@@ -432,26 +704,39 @@
                 requestBody.max_tokens = 2048;
             }
 
-            const response = await fetch(API_URL, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${apiKey}`
-                },
-                body: JSON.stringify(requestBody)
-            });
-            const data = await response.json(); 
-            if (!response.ok) {
-                console.error("Erro da API OpenAI:", data);
-                const errorMessage = data?.error?.message || `HTTP error! status: ${response.status}`;
-                throw new Error(`Erro da API OpenAI: ${errorMessage}`);
-            }
-            
-            if (data.choices && data.choices.length > 0 && data.choices[0].message) {
-                return data.choices[0].message.content;
-            } else {
-                console.error("Resposta inesperada da API OpenAI:", data);
-                throw new Error("A API OpenAI retornou uma resposta vazia ou malformada. Verifique o console para mais detalhes.");
+            try {
+                Logger.debug('Calling OpenAI API', { model, historyLength: history.length });
+                
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKey}`
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+                
+                const data = await response.json(); 
+                
+                if (!response.ok) {
+                    Logger.error('OpenAI API error', null, { status: response.status, data });
+                    const errorMessage = data?.error?.message || `HTTP error! status: ${response.status}`;
+                    throw new APIError(`Erro da API OpenAI: ${errorMessage}`, response.status, 'OpenAI', data);
+                }
+                
+                if (data.choices && data.choices.length > 0 && data.choices[0].message) {
+                    Logger.info('OpenAI API call successful', { model, responseLength: data.choices[0].message.content.length });
+                    return data.choices[0].message.content;
+                } else {
+                    Logger.error('Unexpected OpenAI API response', null, { data });
+                    throw new APIError("A API OpenAI retornou uma resposta vazia ou malformada.", 500, 'OpenAI', data);
+                }
+            } catch (error) {
+                if (error instanceof APIError) {
+                    throw error;
+                }
+                Logger.error('OpenAI API call failed', error, { model, apiKey: apiKey.substring(0, 10) + '...' });
+                throw new APIError(`Erro na comunicação com a API OpenAI: ${error.message}`, 0, 'OpenAI');
             }
         }
 
@@ -492,6 +777,9 @@
 
         // --- Event Listeners and Initialization ---
         document.addEventListener('DOMContentLoaded', () => {
+            // Initialize configuration from localStorage
+            CONFIG.DEBUG_MODE = localStorage.getItem('debugMode') === 'true';
+            
             aiProviderSelect.innerHTML = Object.keys(apiProviders).map(p => `<option value="${p}">${p}</option>`).join('');
             if (localStorage.getItem('saveApiKeys') === 'true') {
                 saveApiKeyCheckbox.checked = true;
@@ -499,6 +787,11 @@
             updateUIForProvider();
             addField('Descrição');
             addField('Marcações Visíveis');
+            
+            Logger.info('Application initialized', { 
+                debugMode: CONFIG.DEBUG_MODE,
+                userAgent: navigator.userAgent 
+            });
         });
 
         aiProviderSelect.addEventListener('change', updateUIForProvider);
@@ -524,27 +817,94 @@
         saveSettingsBtn.addEventListener('click', () => {
             localStorage.setItem('customPersonaPrompt', customPersonaPrompt.value);
             localStorage.setItem('customAnalysisPrompt', customAnalysisPrompt.value);
+            localStorage.setItem('debugMode', debugModeToggle.checked);
+            localStorage.setItem('autoSave', autoSaveToggle.checked);
+            
+            // Update CONFIG based on saved settings
+            CONFIG.DEBUG_MODE = debugModeToggle.checked;
+            
+            Logger.info('Settings saved', { 
+                debugMode: debugModeToggle.checked,
+                autoSave: autoSaveToggle.checked 
+            });
+            
             toggleSettingsModal(false);
         });
 
-        partForm.addEventListener('submit', (event) => {
+        // Export configuration for debugging
+        document.getElementById('export-config-btn').addEventListener('click', () => {
+            const config = {
+                timestamp: new Date().toISOString(),
+                debugMode: CONFIG.DEBUG_MODE,
+                localStorage: {
+                    customPersonaPrompt: localStorage.getItem('customPersonaPrompt'),
+                    customAnalysisPrompt: localStorage.getItem('customAnalysisPrompt'),
+                    debugMode: localStorage.getItem('debugMode'),
+                    autoSave: localStorage.getItem('autoSave'),
+                    saveApiKeys: localStorage.getItem('saveApiKeys')
+                },
+                userAgent: navigator.userAgent,
+                screen: {
+                    width: screen.width,
+                    height: screen.height
+                }
+            };
+            
+            const configText = JSON.stringify(config, null, 2);
+            navigator.clipboard.writeText(configText).then(() => {
+                ErrorHandler.showUserError('Configuração copiada para a área de transferência!', 2000);
+            }).catch(() => {
+                // Fallback for older browsers
+                const textArea = document.createElement('textarea');
+                textArea.value = configText;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                ErrorHandler.showUserError('Configuração copiada para a área de transferência!', 2000);
+            });
+            
+            Logger.info('Configuration exported', config);
+        });
+
+        // Clear console logs
+        document.getElementById('clear-logs-btn').addEventListener('click', () => {
+            console.clear();
+            Logger.info('Console logs cleared');
+            ErrorHandler.showUserError('Logs limpos!', 2000);
+        });
+
+        partForm.addEventListener('submit', async (event) => {
             event.preventDefault();
             
-            // Validation
-            const providerName = aiProviderSelect.value;
-            const apiKey = document.getElementById(apiProviders[providerName].keyName).value.trim();
-            if (!apiKey) {
-                alert('Por favor, insira sua chave de API antes de continuar.');
-                return;
-            }
-            const imageFiles = partImagesInput.files;
-            if (imageFiles.length === 0) {
-                alert('Por favor, selecione pelo menos uma imagem da peça.');
-                return;
-            }
-            const hasData = Array.from(document.querySelectorAll('.custom-field-value')).some(input => input.value.trim() !== '');
-            if (!hasData) {
-                alert('Por favor, preencha pelo menos uma informação sobre a peça.');
+            try {
+                // Comprehensive validation
+                const providerName = aiProviderSelect.value;
+                const apiKey = document.getElementById(apiProviders[providerName].keyName).value.trim();
+                const imageFiles = partImagesInput.files;
+                const hasData = Array.from(document.querySelectorAll('.custom-field-value')).some(input => input.value.trim() !== '');
+                
+                // Validate form data
+                Validator.validateFormData({
+                    apiKey,
+                    images: imageFiles,
+                    hasData
+                });
+                
+                // Validate each image file
+                Array.from(imageFiles).forEach(file => {
+                    Validator.validateImageFile(file);
+                });
+                
+                Logger.info('Form validation passed', { 
+                    provider: providerName, 
+                    imageCount: imageFiles.length,
+                    hasData 
+                });
+                
+            } catch (error) {
+                ErrorHandler.showUserError(error.message);
+                Logger.warn('Form validation failed', error);
                 return;
             }
 
@@ -573,7 +933,7 @@
             }
             
             loader.classList.remove('hidden');
-            showStatus('Processando imagens...');
+            showStatus(CONFIG.STATUS_MESSAGES.PROCESSING_IMAGES);
 
             worker.postMessage(imageFiles);
 
@@ -586,7 +946,7 @@
                     return;
                 }
                 
-                showStatus('Enviando para a IA...');
+                showStatus(CONFIG.STATUS_MESSAGES.SENDING_TO_AI);
                 const imageParts = e.data.data;
                 const model = aiModelSelect.value;
 
@@ -615,16 +975,7 @@
 
                 } catch (error) {
                     console.error("Erro na chamada da API:", error);
-                    let friendlyMessage = "Algo deu errado. ";
-                    if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
-                        friendlyMessage += "Verifique sua conexão com a internet e tente novamente.";
-                    } else if (error.message.includes('API key') || error.message.includes('401')) {
-                        friendlyMessage += "Problema com a chave de API. Verifique se está correta e ativa.";
-                    } else if (error.message.includes('429')) {
-                        friendlyMessage += "Muitas consultas. Aguarde um momento e tente novamente.";
-                    } else {
-                        friendlyMessage += "Tente novamente em alguns minutos. Detalhes: " + error.message;
-                    }
+                    let friendlyMessage = ErrorHandler.handle(error);
                     conversationContainer.innerHTML = `<p class="text-red-600"><b>${friendlyMessage}</b></p>`;
                 } finally {
                     loader.classList.add('hidden');
@@ -640,7 +991,7 @@
             displayConversationTurn(userText, 'Você');
             followUpInput.value = '';
             loader.classList.remove('hidden');
-            showStatus('A IA está pensando...');
+            showStatus(CONFIG.STATUS_MESSAGES.AI_THINKING);
             
             const providerName = aiProviderSelect.value;
             const model = aiModelSelect.value;
@@ -660,7 +1011,7 @@
                 }
             } catch (error) {
                 console.error("Erro na chamada da API de acompanhamento:", error);
-                displayConversationTurn(`**Ocorreu um erro:** ${error.message}`, 'Erro');
+                displayConversationTurn(`**Ocorreu um erro:** ${ErrorHandler.handle(error)}`, 'Erro');
             } finally {
                 loader.classList.add('hidden');
                 showStatus(null);
