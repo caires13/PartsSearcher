@@ -1,1 +1,597 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Análise de Peças com IA</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+        .form-input, .form-select, .form-textarea {
+            @apply w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent sm:text-sm;
+        }
+        .btn {
+            @apply inline-flex items-center justify-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white focus:outline-none focus:ring-2 focus:ring-offset-2;
+        }
+        .btn-primary { @apply bg-indigo-600 hover:bg-indigo-700 focus:ring-indigo-500; }
+        .btn-secondary { @apply bg-gray-700 hover:bg-gray-800 focus:ring-gray-500; }
+        .btn-danger { @apply bg-red-600 hover:bg-red-700 focus:ring-red-500; }
+        
+        /* Estilo da Grade de Dados */
+        .data-grid-header {
+            display: grid;
+            grid-template-columns: 1fr 1fr 50px;
+            gap: 1rem;
+            padding: 0.5rem 1rem;
+            border-bottom: 2px solid #e5e7eb;
+        }
+        .data-grid-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr 50px;
+            gap: 1rem;
+            align-items: center;
+            padding: 0.75rem 1rem;
+        }
+        .data-grid-row:nth-child(even) {
+            background-color: #f9fafb;
+        }
+
+        /* Modal de Configurações */
+        #settings-modal-overlay {
+            transition: opacity 0.3s ease;
+        }
+        #settings-modal {
+            transition: transform 0.3s ease, opacity 0.3s ease;
+        }
+
+        /* Animações e Loader */
+        .loader {
+            border: 4px solid #e5e7eb;
+            border-top: 4px solid #4f46e5;
+            border-radius: 50%;
+            width: 40px; height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 2rem auto;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen p-4">
+
+    <main class="w-full max-w-4xl mx-auto bg-white p-6 md:p-8 rounded-xl shadow-2xl">
+        
+        <header class="text-center mb-8 relative">
+            <h1 class="text-3xl font-bold text-gray-900">Análise de Peças com IA</h1>
+            <p class="mt-2 text-md text-gray-600">Preencha os dados da peça para uma análise completa e automatizada.</p>
+            <button id="open-settings-btn" class="absolute top-0 right-0 p-2 text-gray-500 hover:text-indigo-600">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+            </button>
+        </header>
+
+        <form id="part-form" class="space-y-8">
+            
+            <fieldset class="space-y-4">
+                <label class="text-lg font-semibold text-gray-800">1. Provedor de IA</label>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label for="ai-provider" class="text-sm font-medium text-gray-700">Provedor</label>
+                        <select id="ai-provider" class="form-select mt-1"></select>
+                    </div>
+                    <div>
+                        <label for="ai-model" class="text-sm font-medium text-gray-700">Modelo</label>
+                        <select id="ai-model" class="form-select mt-1"></select>
+                    </div>
+                </div>
+                <div id="api-key-container"></div>
+                <div class="flex items-center">
+                    <input id="save-api-key" type="checkbox" class="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500">
+                    <label for="save-api-key" class="ml-2 block text-sm text-gray-700">Salvar chaves no navegador</label>
+                </div>
+            </fieldset>
+
+            <fieldset>
+                <label class="text-lg font-semibold text-gray-800 mb-4 block">2. Informações da Peça</label>
+                <div id="form-fields-container" class="border border-gray-200 rounded-lg">
+                    <div class="data-grid-header bg-gray-50 rounded-t-lg">
+                        <h3 class="font-medium text-gray-600">Tipo de Informação</h3>
+                        <h3 class="font-medium text-gray-600">Valor</h3>
+                        <h3 class="font-medium text-gray-600">Ação</h3>
+                    </div>
+                </div>
+                <button type="button" id="add-field-btn" class="btn btn-secondary mt-4">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" /></svg>
+                    Adicionar Linha
+                </button>
+            </fieldset>
+
+            <fieldset>
+                 <label class="text-lg font-semibold text-gray-800 mb-4 block">3. Fotos da Peça</label>
+                <div id="image-preview-container" class="mt-1 p-4 bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg flex justify-center items-center min-h-[120px]">
+                    <span id="image-placeholder" class="text-gray-500">Arraste ou selecione as imagens</span>
+                </div>
+                <input id="part-images" type="file" accept="image/*" class="form-input mt-4" multiple>
+            </fieldset>
+
+            <div class="pt-6">
+                <div class="flex items-center justify-center mb-4">
+                    <input id="debug-mode" type="checkbox" class="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500">
+                    <label for="debug-mode" class="ml-2 block text-sm text-gray-700">Modo de Depuração (Pré-visualizar prompt)</label>
+                </div>
+                <button type="submit" class="w-full btn btn-primary text-lg font-semibold">
+                    Analisar com IA
+                </button>
+            </div>
+        </form>
+
+        <section id="result-section" class="hidden mt-10 pt-8 border-t-2 border-gray-200">
+            <div id="debug-output-container"></div>
+            <h2 id="response-title" class="text-2xl font-bold text-gray-900 text-center">Conversa com a IA</h2>
+            <div id="conversation-container" class="mt-6 space-y-4"></div>
+            <div id="loader" class="loader hidden"></div>
+            <form id="follow-up-form" class="hidden mt-6">
+                <label for="follow-up-input" class="sr-only">Faça uma pergunta de acompanhamento</label>
+                <div class="flex items-center">
+                    <input type="text" id="follow-up-input" class="form-input" placeholder="Faça uma pergunta de acompanhamento...">
+                    <button type="submit" class="btn btn-primary ml-3">Enviar</button>
+                </div>
+            </form>
+        </section>
+    </main>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal-overlay" class="fixed inset-0 bg-black bg-opacity-50 hidden z-40"></div>
+    <div id="settings-modal" class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white rounded-lg shadow-xl w-full max-w-2xl p-6 z-50 hidden transform scale-95 opacity-0">
+        <h2 class="text-2xl font-bold text-gray-900 mb-4">Configurações de Prompt</h2>
+        <div class="space-y-6">
+            <div>
+                <label for="custom-persona-prompt" class="block text-sm font-medium text-gray-700">Especialidade do Assistente (Persona)</label>
+                <textarea id="custom-persona-prompt" rows="4" class="form-textarea mt-1"></textarea>
+            </div>
+            <div>
+                <label for="custom-analysis-prompt" class="block text-sm font-medium text-gray-700">Análise Solicitada (Perguntas)</label>
+                <textarea id="custom-analysis-prompt" rows="6" class="form-textarea mt-1"></textarea>
+            </div>
+        </div>
+        <div class="mt-8 flex justify-end space-x-3">
+            <button id="cancel-settings-btn" class="btn bg-gray-200 text-gray-700 hover:bg-gray-300">Cancelar</button>
+            <button id="save-settings-btn" class="btn btn-primary">Salvar e Fechar</button>
+        </div>
+    </div>
+
+
+    <script>
+        // --- DOM Elements ---
+        const formFieldsContainer = document.getElementById('form-fields-container');
+        const addFieldBtn = document.getElementById('add-field-btn');
+        const partForm = document.getElementById('part-form');
+        const partImagesInput = document.getElementById('part-images');
+        const imagePreviewContainer = document.getElementById('image-preview-container');
+        const imagePlaceholder = document.getElementById('image-placeholder');
+        const resultSection = document.getElementById('result-section');
+        const conversationContainer = document.getElementById('conversation-container');
+        const responseTitle = document.getElementById('response-title');
+        const loader = document.getElementById('loader');
+        const aiProviderSelect = document.getElementById('ai-provider');
+        const aiModelSelect = document.getElementById('ai-model');
+        const apiKeyContainer = document.getElementById('api-key-container');
+        const saveApiKeyCheckbox = document.getElementById('save-api-key');
+        const debugModeCheckbox = document.getElementById('debug-mode');
+        const debugOutputContainer = document.getElementById('debug-output-container');
+        const openSettingsBtn = document.getElementById('open-settings-btn');
+        const settingsModalOverlay = document.getElementById('settings-modal-overlay');
+        const settingsModal = document.getElementById('settings-modal');
+        const saveSettingsBtn = document.getElementById('save-settings-btn');
+        const cancelSettingsBtn = document.getElementById('cancel-settings-btn');
+        const customPersonaPrompt = document.getElementById('custom-persona-prompt');
+        const customAnalysisPrompt = document.getElementById('custom-analysis-prompt');
+        const followUpForm = document.getElementById('follow-up-form');
+        const followUpInput = document.getElementById('follow-up-input');
+
+        // --- Data Structures ---
+        let fieldCounter = 0;
+        let conversationHistory = [];
+        
+        const fieldOptions = {
+            'Descrição': 'Ex: Peça de metal com mola, parece ser uma pinça',
+            'Marcações Visíveis': 'Ex: RM52-A2 e 37U-01',
+            'Part Number (Código)': 'Ex: 54.012.008F',
+            'Material': 'Ex: Aço, Alumínio, Plástico ABS',
+            'Dimensões': 'Ex: 15mm x 30mm x 5mm',
+            'Voltagem': 'Ex: 24V DC',
+            'Fabricante': 'Ex: Ryobi, Heidelberg',
+            'Posição na Máquina': 'Ex: Unidade de molha, cilindro de impressão'
+        };
+
+        const apiProviders = {
+            "Google Gemini": {
+                models: ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'],
+                keyName: 'geminiApiKey',
+                keyLabel: 'Chave da API Gemini',
+                defaultKey: 'AIzaSyCc499PgaUH6A0yIZuTEYrFO7ODmkFj6EY'
+            },
+            "OpenAI": {
+                models: ['gpt-4o', 'gpt-4o-2024-08-06', 'gpt-4.1-2025-04-14', 'gpt-4.1-mini-2025-04-14', 'o3-2025-04-16', 'o3-mini-2025-01-31'],
+                keyName: 'openaiApiKey',
+                keyLabel: 'Chave da API OpenAI',
+                defaultKey: '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'
+            }
+        };
+
+        const DEFAULT_PERSONA_PROMPT = `Você é um assistente especialista em máquinas de gráfica, incluindo offset e flexográfica, com conhecimento em uma variedade de marcas como Ryobi, Adast, Heidelberg, Ibirama, Etirama, Flexmaq, etc. Sua tarefa é me ajudar a analisar peças com base nas informações e fotos a seguir.`;
+        const DEFAULT_ANALYSIS_PROMPT = `1. **Identificação e Função:** Qual o nome técnico, localização e função principal desta peça?\n2. **Especificações e Part Number:** Qual o part number, especificações e análise das marcações?\n3. **Fornecedores para Importação:** Quais termos de busca, tipo de fornecedor e plataformas recomendadas para encontrar esta peça?`;
+
+        // --- Web Worker Setup ---
+        const workerCode = `
+            self.onmessage = function(e) {
+                const files = e.data;
+                const promises = [];
+
+                for (let i = 0; i < files.length; i++) {
+                    const file = files[i];
+                    promises.push(
+                        new Promise((resolve, reject) => {
+                            const reader = new FileReader();
+                            reader.onload = () => resolve({
+                                mimeType: file.type,
+                                data: reader.result.split(',')[1],
+                                fullDataUrl: reader.result
+                            });
+                            reader.onerror = reject;
+                            reader.readAsDataURL(file);
+                        })
+                    );
+                }
+
+                Promise.all(promises)
+                    .then(results => {
+                        self.postMessage({ status: 'complete', data: results });
+                    })
+                    .catch(error => {
+                        self.postMessage({ status: 'error', error: error.message });
+                    });
+            };
+        `;
+        const blob = new Blob([workerCode], { type: 'application/javascript' });
+        const worker = new Worker(URL.createObjectURL(blob));
+
+        // --- Functions ---
+        const toggleSettingsModal = (show) => {
+            if (show) {
+                customPersonaPrompt.value = localStorage.getItem('customPersonaPrompt') || DEFAULT_PERSONA_PROMPT;
+                customAnalysisPrompt.value = localStorage.getItem('customAnalysisPrompt') || DEFAULT_ANALYSIS_PROMPT;
+                settingsModalOverlay.classList.remove('hidden');
+                settingsModal.classList.remove('hidden');
+                setTimeout(() => {
+                    settingsModal.classList.remove('scale-95', 'opacity-0');
+                }, 10);
+            } else {
+                settingsModal.classList.add('scale-95', 'opacity-0');
+                setTimeout(() => {
+                    settingsModalOverlay.classList.add('hidden');
+                    settingsModal.classList.add('hidden');
+                }, 300);
+            }
+        };
+
+        const addField = (selectedLabel = 'Descrição', value = '') => {
+            fieldCounter++;
+            const div = document.createElement('div');
+            div.className = 'data-grid-row dynamic-field';
+            const optionsHTML = Object.keys(fieldOptions).map(opt => `<option value="${opt}" ${opt === selectedLabel ? 'selected' : ''}>${opt}</option>`).join('');
+            div.innerHTML = `
+                <select class="form-select custom-field-label">${optionsHTML}</select>
+                <input type="text" value="${value}" class="form-input custom-field-value" placeholder="${fieldOptions[selectedLabel]}">
+                <button type="button" class="btn btn-danger" onclick="this.parentElement.remove()">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" /></svg>
+                </button>
+            `;
+            formFieldsContainer.appendChild(div);
+            div.querySelector('.custom-field-label').addEventListener('change', (e) => {
+                const selectedKey = e.target.value;
+                e.target.parentElement.querySelector('.custom-field-value').placeholder = fieldOptions[selectedKey] || 'Insira o valor';
+            });
+        };
+
+        const updateUIForProvider = () => {
+            const providerName = aiProviderSelect.value;
+            const provider = apiProviders[providerName];
+            aiModelSelect.innerHTML = provider.models.map(model => `<option value="${model}">${model}</option>`).join('');
+            apiKeyContainer.innerHTML = `
+                <label for="${provider.keyName}" class="text-sm font-medium text-gray-700 mt-2 block">${provider.keyLabel}</label>
+                <input type="password" id="${provider.keyName}" class="form-input mt-1" placeholder="Cole sua chave de API aqui">
+            `;
+            const apiKeyInput = document.getElementById(provider.keyName);
+            
+            let keyValue = '';
+            if (saveApiKeyCheckbox.checked) {
+                keyValue = localStorage.getItem(provider.keyName) || '';
+            }
+            if (!keyValue && provider.defaultKey) {
+                keyValue = provider.defaultKey;
+            }
+            apiKeyInput.value = keyValue;
+
+            apiKeyInput.addEventListener('input', () => {
+                if (saveApiKeyCheckbox.checked) {
+                    localStorage.setItem(provider.keyName, apiKeyInput.value);
+                }
+            });
+        };
+        
+        const handleImagePreview = (event) => {
+            imagePreviewContainer.innerHTML = '';
+            const files = event.target.files;
+            if (files && files.length > 0) {
+                imagePlaceholder.classList.add('hidden');
+                const grid = document.createElement('div');
+                grid.className = 'flex flex-wrap gap-4 justify-center';
+                Array.from(files).forEach(file => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const img = document.createElement('img');
+                        img.src = e.target.result;
+                        img.className = 'max-h-32 max-w-32 object-contain rounded-md border border-gray-200 shadow-sm';
+                        grid.appendChild(img);
+                    };
+                    reader.readAsDataURL(file);
+                });
+                imagePreviewContainer.appendChild(grid);
+            } else {
+                imagePreviewContainer.appendChild(imagePlaceholder);
+                imagePlaceholder.classList.remove('hidden');
+            }
+        };
+
+        async function callGeminiAPI(apiKey, model, history) {
+            const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+            const requestBody = { contents: history };
+            const response = await fetch(API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody)
+            });
+            const data = await response.json(); 
+            if (!response.ok) {
+                console.error("Erro da API Gemini:", data);
+                const errorMessage = data?.error?.message || `HTTP error! status: ${response.status}`;
+                throw new Error(`Erro da API Gemini: ${errorMessage}`);
+            }
+            
+            if (data.candidates && data.candidates.length > 0 && data.candidates[0].content && data.candidates[0].content.parts && data.candidates[0].content.parts.length > 0) {
+                return data.candidates[0].content.parts[0].text;
+            } else {
+                console.error("Resposta inesperada da API Gemini:", data);
+                if (data.promptFeedback && data.promptFeedback.blockReason) {
+                    throw new Error(`A API Gemini bloqueou a resposta. Motivo: ${data.promptFeedback.blockReason}`);
+                }
+                throw new Error("A API Gemini retornou uma resposta vazia ou malformada. Verifique o console para mais detalhes.");
+            }
+        }
+
+        async function callOpenAIAPI(apiKey, model, history) {
+            const API_URL = 'https://api.openai.com/v1/chat/completions';
+            const requestBody = { model, messages: history };
+            if (model.startsWith('o3')) {
+                requestBody.max_completion_tokens = 2048;
+            } else {
+                requestBody.max_tokens = 2048;
+            }
+
+            const response = await fetch(API_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`
+                },
+                body: JSON.stringify(requestBody)
+            });
+            const data = await response.json(); 
+            if (!response.ok) {
+                console.error("Erro da API OpenAI:", data);
+                const errorMessage = data?.error?.message || `HTTP error! status: ${response.status}`;
+                throw new Error(`Erro da API OpenAI: ${errorMessage}`);
+            }
+            
+            if (data.choices && data.choices.length > 0 && data.choices[0].message) {
+                return data.choices[0].message.content;
+            } else {
+                console.error("Resposta inesperada da API OpenAI:", data);
+                throw new Error("A API OpenAI retornou uma resposta vazia ou malformada. Verifique o console para mais detalhes.");
+            }
+        }
+
+        function displaySimpleDebugInfo(textPrompt, imageFiles) {
+            debugOutputContainer.innerHTML = ''; 
+            const debugContainer = document.createElement('div');
+            debugContainer.className = 'mb-6 p-4 bg-yellow-50 border border-yellow-300 rounded-lg';
+            const debugTitle = document.createElement('h3');
+            debugTitle.className = 'text-lg font-bold text-yellow-800';
+            debugTitle.textContent = '🐛 Pré-visualização do Prompt';
+            let imageFileNames = 'Nenhuma imagem selecionada.';
+            if (imageFiles.length > 0) {
+                 imageFileNames = Array.from(imageFiles).map(file => file.name).join('\n');
+            }
+            const debugContent = document.createElement('pre');
+            debugContent.className = 'whitespace-pre-wrap break-all text-xs bg-white p-2 rounded mt-2 font-mono';
+            debugContent.textContent = `--- PROMPT DE TEXTO ---\n${textPrompt}\n\n--- ARQUIVOS DE IMAGEM ---\n${imageFileNames}`;
+            debugContainer.appendChild(debugTitle);
+            debugContainer.appendChild(debugContent);
+            debugOutputContainer.appendChild(debugContainer);
+        }
+
+        function displayConversationTurn(text, role) {
+            const turnDiv = document.createElement('div');
+            const roleSpan = document.createElement('span');
+            roleSpan.className = `font-bold ${role === 'Você' ? 'text-indigo-600' : 'text-gray-800'}`;
+            roleSpan.textContent = role;
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'prose max-w-none mt-1';
+            contentDiv.innerHTML = marked.parse(text);
+
+            turnDiv.appendChild(roleSpan);
+            turnDiv.appendChild(contentDiv);
+            conversationContainer.appendChild(turnDiv);
+            turnDiv.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // --- Event Listeners and Initialization ---
+        document.addEventListener('DOMContentLoaded', () => {
+            aiProviderSelect.innerHTML = Object.keys(apiProviders).map(p => `<option value="${p}">${p}</option>`).join('');
+            if (localStorage.getItem('saveApiKeys') === 'true') {
+                saveApiKeyCheckbox.checked = true;
+            }
+            updateUIForProvider();
+            addField('Descrição');
+            addField('Marcações Visíveis');
+        });
+
+        aiProviderSelect.addEventListener('change', updateUIForProvider);
+        addFieldBtn.addEventListener('click', () => addField(Object.keys(fieldOptions)[0]));
+
+        saveApiKeyCheckbox.addEventListener('change', () => {
+            localStorage.setItem('saveApiKeys', saveApiKeyCheckbox.checked);
+            if (!saveApiKeyCheckbox.checked) {
+                Object.values(apiProviders).forEach(p => localStorage.removeItem(p.keyName));
+            } else {
+                const providerName = aiProviderSelect.value;
+                const provider = apiProviders[providerName];
+                const apiKeyInput = document.getElementById(provider.keyName);
+                if(apiKeyInput) localStorage.setItem(provider.keyName, apiKeyInput.value);
+            }
+        });
+        
+        partImagesInput.addEventListener('change', handleImagePreview);
+
+        openSettingsBtn.addEventListener('click', () => toggleSettingsModal(true));
+        cancelSettingsBtn.addEventListener('click', () => toggleSettingsModal(false));
+        settingsModalOverlay.addEventListener('click', () => toggleSettingsModal(false));
+        saveSettingsBtn.addEventListener('click', () => {
+            localStorage.setItem('customPersonaPrompt', customPersonaPrompt.value);
+            localStorage.setItem('customAnalysisPrompt', customAnalysisPrompt.value);
+            toggleSettingsModal(false);
+        });
+
+        partForm.addEventListener('submit', (event) => {
+            event.preventDefault();
+            conversationHistory = []; // Reset history for new analysis
+            
+            const imageFiles = partImagesInput.files;
+            let textPrompt = `${localStorage.getItem('customPersonaPrompt') || DEFAULT_PERSONA_PROMPT}\n\n**INFORMAÇÕES DA PEÇA:**\n`;
+            document.querySelectorAll('.dynamic-field').forEach(field => {
+                const label = field.querySelector('.custom-field-label').value.trim();
+                const value = field.querySelector('.custom-field-value').value.trim();
+                if (label && value) textPrompt += `* **${label}:** ${value}\n`;
+            });
+            textPrompt += `\n**ANÁLISE SOLICITADA:**\n${localStorage.getItem('customAnalysisPrompt') || DEFAULT_ANALYSIS_PROMPT}`;
+
+            resultSection.classList.remove('hidden');
+            resultSection.scrollIntoView({ behavior: 'smooth' });
+            debugOutputContainer.innerHTML = '';
+            conversationContainer.innerHTML = '';
+            loader.classList.add('hidden');
+            responseTitle.classList.remove('hidden');
+            followUpForm.classList.add('hidden');
+
+            if (debugModeCheckbox.checked) {
+                displaySimpleDebugInfo(textPrompt, imageFiles);
+                return; 
+            }
+            
+            const providerName = aiProviderSelect.value;
+            const apiKey = document.getElementById(apiProviders[providerName].keyName).value.trim();
+            if (!apiKey) {
+                alert(`Por favor, insira sua chave da API para ${providerName}.`);
+                return;
+            }
+            
+            loader.classList.remove('hidden');
+
+            worker.postMessage(imageFiles);
+
+            worker.onmessage = async function(e) {
+                if (e.data.status === 'error') {
+                    console.error("Erro no Web Worker:", e.data.error);
+                    conversationContainer.innerHTML = `<p class="text-red-600"><b>Ocorreu um erro ao processar as imagens.</b></p>`;
+                    loader.classList.add('hidden');
+                    return;
+                }
+                
+                const imageParts = e.data.data;
+                const model = aiModelSelect.value;
+
+                try {
+                    let initialUserContent;
+                    if (providerName === 'Google Gemini') {
+                        initialUserContent = { role: 'user', parts: [{ text: textPrompt }, ...imageParts.map(p => ({ inlineData: { mimeType: p.mimeType, data: p.data } }))] };
+                        conversationHistory.push(initialUserContent);
+                    } else if (providerName === 'OpenAI') {
+                        initialUserContent = { role: 'user', content: [{ type: 'text', text: textPrompt }, ...imageParts.map(p => ({ type: 'image_url', image_url: { url: p.fullDataUrl } }))] };
+                        conversationHistory.push(initialUserContent);
+                    }
+
+                    let responseText = '';
+                    if (providerName === 'Google Gemini') {
+                        responseText = await callGeminiAPI(apiKey, model, conversationHistory);
+                        conversationHistory.push({ role: 'model', parts: [{ text: responseText }] });
+                    } else if (providerName === 'OpenAI') {
+                        responseText = await callOpenAIAPI(apiKey, model, conversationHistory);
+                        conversationHistory.push({ role: 'assistant', content: responseText });
+                    }
+
+                    displayConversationTurn(responseText, 'IA');
+                    followUpForm.classList.remove('hidden');
+
+                } catch (error) {
+                    console.error("Erro na chamada da API:", error);
+                    conversationContainer.innerHTML = `<p class="text-red-600"><b>Ocorreu um erro:</b> ${error.message}. Verifique sua chave de API e a conexão.</p>`;
+                } finally {
+                    loader.classList.add('hidden');
+                }
+            };
+        });
+
+        followUpForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const userText = followUpInput.value.trim();
+            if (!userText) return;
+
+            displayConversationTurn(userText, 'Você');
+            followUpInput.value = '';
+            loader.classList.remove('hidden');
+            
+            const providerName = aiProviderSelect.value;
+            const model = aiModelSelect.value;
+            const apiKey = document.getElementById(apiProviders[providerName].keyName).value.trim();
+
+            try {
+                if (providerName === 'Google Gemini') {
+                    conversationHistory.push({ role: 'user', parts: [{ text: userText }] });
+                    const responseText = await callGeminiAPI(apiKey, model, conversationHistory);
+                    conversationHistory.push({ role: 'model', parts: [{ text: responseText }] });
+                    displayConversationTurn(responseText, 'IA');
+                } else if (providerName === 'OpenAI') {
+                    conversationHistory.push({ role: 'user', content: userText });
+                    const responseText = await callOpenAIAPI(apiKey, model, conversationHistory);
+                    conversationHistory.push({ role: 'assistant', content: responseText });
+                    displayConversationTurn(responseText, 'IA');
+                }
+            } catch (error) {
+                console.error("Erro na chamada da API de acompanhamento:", error);
+                displayConversationTurn(`**Ocorreu um erro:** ${error.message}`, 'Erro');
+            } finally {
+                loader.classList.add('hidden');
+            }
+        });
+    </script>
+</body>
+</html>
 
