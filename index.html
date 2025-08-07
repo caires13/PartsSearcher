@@ -1,4 +1,10 @@
 <!DOCTYPE html>
+<!-- 
+    PartsSearcher - Análise de Peças com IA
+    Updated to support latest OpenAI and Google Gemini models (2025)
+    - OpenAI: o3, o3-mini
+    - Google Gemini: gemini-2.5-pro, gemini-2.5-flash
+-->
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
@@ -194,7 +200,7 @@
         const CONFIG = {
             // API Configuration
             API_ENDPOINTS: {
-                GEMINI: 'https://generativelanguage.googleapis.com/v1beta',
+                GEMINI: 'https://generativelanguage.googleapis.com/v1',
                 OPENAI: 'https://api.openai.com/v1'
             },
             
@@ -451,14 +457,15 @@
             'Posição na Máquina': 'Ex: Unidade de molha, cilindro de impressão'
         };
 
+        // Updated to latest models as of 2025
         const apiProviders = {
             "Google Gemini": {
-                models: ['gemini-1.5-pro-latest', 'gemini-2.5-flash-preview-05-20'],
+                models: ['gemini-2.5-pro', 'gemini-2.5-flash'],
                 keyName: 'geminiApiKey',
                 keyLabel: 'Chave da API Gemini'
             },
             "OpenAI": {
-                models: ['gpt-4o', 'gpt-4o-2024-08-06', 'gpt-4.1-2025-04-14', 'gpt-4.1-mini-2025-04-14', 'o3-2025-04-16', 'o3-mini-2025-01-31'],
+                models: ['o3', 'o3-mini'],
                 keyName: 'openaiApiKey',
                 keyLabel: 'Chave da API OpenAI'
             }
@@ -657,7 +664,25 @@
 
         async function callGeminiAPI(apiKey, model, history) {
             const API_URL = `${CONFIG.API_ENDPOINTS.GEMINI}/models/${model}:generateContent?key=${apiKey}`;
-            const requestBody = { contents: history };
+            
+            // Model-specific configurations
+            const generationConfig = {
+                temperature: 0.7,
+                maxOutputTokens: 4096
+            };
+            
+            // Optimize for specific models
+            if (model.includes('flash')) {
+                generationConfig.temperature = 0.5; // More focused for flash models
+            } else if (model.includes('2.5-pro')) {
+                generationConfig.temperature = 0.7; // Balanced for pro models
+                generationConfig.maxOutputTokens = 8192; // Higher token limit for pro models
+            }
+            
+            const requestBody = { 
+                contents: history,
+                generationConfig
+            };
             
             try {
                 Logger.debug('Calling Gemini API', { model, historyLength: history.length });
@@ -672,7 +697,15 @@
                 
                 if (!response.ok) {
                     Logger.error('Gemini API error', null, { status: response.status, data });
-                    const errorMessage = data?.error?.message || `HTTP error! status: ${response.status}`;
+                    let errorMessage = data?.error?.message || `HTTP error! status: ${response.status}`;
+                    
+                    // Handle model-specific errors
+                    if (response.status === 400 && data?.error?.message?.includes('model')) {
+                        errorMessage = `Modelo ${model} não está disponível. Tente outro modelo.`;
+                    } else if (response.status === 429) {
+                        errorMessage = 'Limite de requisições excedido. Aguarde um momento.';
+                    }
+                    
                     throw new APIError(`Erro da API Gemini: ${errorMessage}`, response.status, 'Gemini', data);
                 }
                 
@@ -697,11 +730,22 @@
 
         async function callOpenAIAPI(apiKey, model, history) {
             const API_URL = `${CONFIG.API_ENDPOINTS.OPENAI}/chat/completions`;
-            const requestBody = { model, messages: history };
-            if (model.startsWith('o3')) {
-                requestBody.max_completion_tokens = 2048;
-            } else {
-                requestBody.max_tokens = 2048;
+            
+            // Model-specific configurations
+            const requestBody = { 
+                model, 
+                messages: history,
+                max_tokens: 4096,
+                temperature: 0.7
+            };
+            
+            // Optimize for specific models
+            if (model.includes('mini')) {
+                requestBody.temperature = 0.5; // More focused for mini models
+                requestBody.max_tokens = 2048; // Shorter responses for mini models
+            } else if (model === 'o3') {
+                requestBody.temperature = 0.7; // Balanced for o3 models
+                requestBody.max_tokens = 8192; // Higher token limit for o3 models
             }
 
             try {
@@ -720,7 +764,17 @@
                 
                 if (!response.ok) {
                     Logger.error('OpenAI API error', null, { status: response.status, data });
-                    const errorMessage = data?.error?.message || `HTTP error! status: ${response.status}`;
+                    let errorMessage = data?.error?.message || `HTTP error! status: ${response.status}`;
+                    
+                    // Handle model-specific errors
+                    if (response.status === 400 && data?.error?.message?.includes('model')) {
+                        errorMessage = `Modelo ${model} não está disponível. Tente outro modelo.`;
+                    } else if (response.status === 429) {
+                        errorMessage = 'Limite de requisições excedido. Aguarde um momento.';
+                    } else if (response.status === 401) {
+                        errorMessage = 'Chave de API inválida. Verifique suas credenciais.';
+                    }
+                    
                     throw new APIError(`Erro da API OpenAI: ${errorMessage}`, response.status, 'OpenAI', data);
                 }
                 
