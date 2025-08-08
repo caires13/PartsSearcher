@@ -12,21 +12,57 @@
     <title>Análise de Peças com IA</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body {
             font-family: 'Inter', sans-serif;
             background-color: #f3f4f6;
         }
+        /* Basic inputs/buttons styling without using Tailwind @apply (not supported via CDN) */
         .form-input, .form-select, .form-textarea {
-            @apply w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent sm:text-sm;
+            width: 100%;
+            padding: 0.5rem 0.75rem;
+            background-color: #ffffff;
+            border: 1px solid #d1d5db; /* gray-300 */
+            border-radius: 0.375rem; /* rounded-md */
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+            color: #111827; /* gray-900 */
+            font-size: 0.875rem; /* text-sm */
+            line-height: 1.25rem;
+        }
+        .form-input::placeholder, .form-textarea::placeholder {
+            color: #9ca3af; /* placeholder gray-400 */
+        }
+        .form-input:focus, .form-select:focus, .form-textarea:focus {
+            outline: 2px solid transparent;
+            outline-offset: 2px;
+            border-color: transparent;
+            box-shadow: 0 0 0 2px #6366f1; /* indigo-500 ring */
         }
         .btn {
-            @apply inline-flex items-center justify-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white focus:outline-none focus:ring-2 focus:ring-offset-2;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.5rem 1rem;
+            border: 1px solid transparent;
+            border-radius: 0.375rem;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: #ffffff;
+            cursor: pointer;
         }
-        .btn-primary { @apply bg-indigo-600 hover:bg-indigo-700 focus:ring-indigo-500; }
-        .btn-secondary { @apply bg-gray-700 hover:bg-gray-800 focus:ring-gray-500; }
-        .btn-danger { @apply bg-red-600 hover:bg-red-700 focus:ring-red-500; }
+        .btn:focus {
+            outline: 2px solid #6366f1;
+            outline-offset: 2px;
+        }
+        .btn-primary { background-color: #4f46e5; }
+        .btn-primary:hover { background-color: #4338ca; }
+        .btn-secondary { background-color: #374151; }
+        .btn-secondary:hover { background-color: #1f2937; }
+        .btn-danger { background-color: #dc2626; }
+        .btn-danger:hover { background-color: #b91c1c; }
         
         /* Estilo da Grade de Dados */
         .data-grid-header {
@@ -48,12 +84,8 @@
         }
 
         /* Modal de Configurações */
-        #settings-modal-overlay {
-            transition: opacity 0.3s ease;
-        }
-        #settings-modal {
-            transition: transform 0.3s ease, opacity 0.3s ease;
-        }
+        #settings-modal-overlay { transition: opacity 0.3s ease; }
+        #settings-modal { transition: transform 0.3s ease, opacity 0.3s ease; }
 
         /* Animações e Loader */
         .loader {
@@ -140,7 +172,7 @@
         <section id="result-section" class="hidden mt-10 pt-8 border-t-2 border-gray-200">
             <div id="debug-output-container"></div>
             <h2 id="response-title" class="text-2xl font-bold text-gray-900 text-center">Conversa com a IA</h2>
-            <div id="status-container" class="hidden text-center text-blue-600 p-2 bg-blue-50 rounded mb-4"></div>
+            <div id="status-container" class="hidden text-center text-blue-600 p-2 bg-blue-50 rounded mb-4" role="status" aria-live="polite"></div>
             <div id="conversation-container" class="mt-6 space-y-4"></div>
             <div id="loader" class="loader hidden"></div>
             <form id="follow-up-form" class="hidden mt-6">
@@ -155,8 +187,8 @@
 
     <!-- Settings Modal -->
     <div id="settings-modal-overlay" class="fixed inset-0 bg-black bg-opacity-50 hidden z-40"></div>
-    <div id="settings-modal" class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white rounded-lg shadow-xl w-full max-w-2xl p-6 z-50 hidden transform scale-95 opacity-0">
-        <h2 class="text-2xl font-bold text-gray-900 mb-4">Configurações de Prompt</h2>
+    <div id="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title" class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white rounded-lg shadow-xl w-full max-w-2xl p-6 z-50 hidden transform scale-95 opacity-0">
+        <h2 id="settings-modal-title" class="text-2xl font-bold text-gray-900 mb-4">Configurações de Prompt</h2>
         <div class="space-y-6">
             <div>
                 <label for="custom-persona-prompt" class="block text-sm font-medium text-gray-700">Especialidade do Assistente (Persona)</label>
@@ -550,7 +582,7 @@
             div.innerHTML = `
                 <select class="form-select custom-field-label">${optionsHTML}</select>
                 <input type="text" value="${value}" class="form-input custom-field-value" placeholder="${fieldOptions[selectedLabel]}">
-                <button type="button" class="btn btn-danger" onclick="this.parentElement.remove()">
+                <button type="button" class="btn btn-danger" data-action="remove-field" aria-label="Remover linha">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" /></svg>
                 </button>
             `;
@@ -560,6 +592,15 @@
                 e.target.parentElement.querySelector('.custom-field-value').placeholder = fieldOptions[selectedKey] || 'Insira o valor';
             });
         };
+
+        // Event delegation for dynamic remove buttons
+        formFieldsContainer.addEventListener('click', (e) => {
+            const target = e.target.closest('[data-action="remove-field"]');
+            if (target) {
+                const row = target.closest('.dynamic-field');
+                if (row) row.remove();
+            }
+        });
 
         const validateApiKey = async (apiKey, providerName) => {
             const statusIcon = document.getElementById('api-key-status');
@@ -617,10 +658,11 @@
                 keyValue = localStorage.getItem(provider.keyName) || '';
             }
             apiKeyInput.value = keyValue;
-            validateApiKey(keyValue, providerName);
+            const debouncedValidate = debounce(validateApiKey, CONFIG.AUTO_SAVE_DELAY);
+            debouncedValidate(keyValue, providerName);
 
             apiKeyInput.addEventListener('input', () => {
-                validateApiKey(apiKeyInput.value, providerName);
+                debouncedValidate(apiKeyInput.value, providerName);
                 if (saveApiKeyCheckbox.checked) {
                     localStorage.setItem(provider.keyName, apiKeyInput.value);
                 }
@@ -628,7 +670,11 @@
         };
         
         const handleImagePreview = (event) => {
-            const files = Array.from(event.target.files);
+            const inputFiles = event.target?.files ? Array.from(event.target.files) : [];
+            const files = inputFiles.slice(0, CONFIG.MAX_FILES);
+            if (inputFiles.length > CONFIG.MAX_FILES) {
+                ErrorHandler.showUserError(`Máximo de ${CONFIG.MAX_FILES} imagens permitido.`);
+            }
             
             for (const file of files) {
                 try {
@@ -661,6 +707,26 @@
                 imagePlaceholder.classList.remove('hidden');
             }
         };
+
+        // Drag & drop support for images
+        imagePreviewContainer.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            imagePreviewContainer.classList.add('ring-2', 'ring-indigo-500');
+        });
+        imagePreviewContainer.addEventListener('dragleave', () => {
+            imagePreviewContainer.classList.remove('ring-2', 'ring-indigo-500');
+        });
+        imagePreviewContainer.addEventListener('drop', (e) => {
+            e.preventDefault();
+            imagePreviewContainer.classList.remove('ring-2', 'ring-indigo-500');
+            const dropped = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+            // Build a DataTransfer to set on input for consistency
+            const dt = new DataTransfer();
+            dropped.slice(0, CONFIG.MAX_FILES).forEach(f => dt.items.add(f));
+            partImagesInput.files = dt.files;
+            // Reuse preview logic
+            handleImagePreview({ target: { files: partImagesInput.files } });
+        });
 
         async function callGeminiAPI(apiKey, model, history) {
             const API_URL = `${CONFIG.API_ENDPOINTS.GEMINI}/models/${model}:generateContent?key=${apiKey}`;
@@ -779,8 +845,12 @@
                 }
                 
                 if (data.choices && data.choices.length > 0 && data.choices[0].message) {
-                    Logger.info('OpenAI API call successful', { model, responseLength: data.choices[0].message.content.length });
-                    return data.choices[0].message.content;
+                    const content = data.choices[0].message.content;
+                    const textContent = Array.isArray(content)
+                        ? content.map(part => (typeof part === 'string' ? part : part.text || '')).join('\n')
+                        : (content || '');
+                    Logger.info('OpenAI API call successful', { model, responseLength: (textContent || '').length });
+                    return textContent;
                 } else {
                     Logger.error('Unexpected OpenAI API response', null, { data });
                     throw new APIError("A API OpenAI retornou uma resposta vazia ou malformada.", 500, 'OpenAI', data);
@@ -821,13 +891,23 @@
 
             const contentDiv = document.createElement('div');
             contentDiv.className = 'prose max-w-none mt-1';
-            contentDiv.innerHTML = marked.parse(text);
+            const parsed = marked.parse(text || '');
+            contentDiv.innerHTML = window.DOMPurify ? DOMPurify.sanitize(parsed) : parsed;
 
             turnDiv.appendChild(roleSpan);
             turnDiv.appendChild(contentDiv);
             conversationContainer.appendChild(turnDiv);
             turnDiv.scrollIntoView({ behavior: 'smooth' });
         }
+
+        // --- Utilities ---
+        const debounce = (fn, delay = 300) => {
+            let timerId;
+            return (...args) => {
+                clearTimeout(timerId);
+                timerId = setTimeout(() => fn(...args), delay);
+            };
+        };
 
         // --- Event Listeners and Initialization ---
         document.addEventListener('DOMContentLoaded', () => {
@@ -1003,6 +1083,7 @@
                 showStatus(CONFIG.STATUS_MESSAGES.SENDING_TO_AI);
                 const imageParts = e.data.data;
                 const model = aiModelSelect.value;
+                const providerName = aiProviderSelect.value;
 
                 try {
                     let initialUserContent;
@@ -1058,7 +1139,8 @@
                     conversationHistory.push({ role: 'model', parts: [{ text: responseText }] });
                     displayConversationTurn(responseText, 'IA');
                 } else if (providerName === 'OpenAI') {
-                    conversationHistory.push({ role: 'user', content: userText });
+                    // Normalize user message as text content; server may return array or string
+                    conversationHistory.push({ role: 'user', content: [{ type: 'text', text: userText }] });
                     const responseText = await callOpenAIAPI(apiKey, model, conversationHistory);
                     conversationHistory.push({ role: 'assistant', content: responseText });
                     displayConversationTurn(responseText, 'IA');
