@@ -244,6 +244,7 @@
             // UI Configuration
             DEBUG_MODE: false,
             AUTO_SAVE_DELAY: 1000, // 1 second
+            IMAGE_PROCESS_TIMEOUT_MS: 10000, // 10s fallback if worker hangs
             
             // Error Messages
             ERROR_MESSAGES: {
@@ -541,6 +542,65 @@
         const worker = new Worker(URL.createObjectURL(blob));
 
         // --- Functions ---
+        const readImagesMain = async (files) => {
+            const fileArray = Array.from(files);
+            const readers = fileArray.map(file => new Promise((resolve, reject) => {
+                try {
+                    Validator.validateImageFile(file);
+                    const reader = new FileReader();
+                    reader.onload = () => resolve({
+                        mimeType: file.type,
+                        data: reader.result.split(',')[1],
+                        fullDataUrl: reader.result
+                    });
+                    reader.onerror = () => reject(new Error('Falha ao ler arquivo de imagem.'));
+                    reader.readAsDataURL(file);
+                } catch (err) {
+                    reject(err);
+                }
+            }));
+            return Promise.all(readers);
+        };
+
+        const getImageParts = async (files) => {
+            return new Promise((resolve) => {
+                let resolved = false;
+                const fallback = async (reason) => {
+                    if (resolved) return;
+                    resolved = true;
+                    Logger.warn('Fallback to main-thread image reading', reason);
+                    readImagesMain(files).then(resolve).catch((err) => {
+                        Logger.error('Failed to read images on main thread', err);
+                        ErrorHandler.showUserError(CONFIG.ERROR_MESSAGES.WORKER_ERROR);
+                        resolve([]);
+                    });
+                };
+
+                const timerId = setTimeout(() => fallback({ type: 'timeout' }), CONFIG.IMAGE_PROCESS_TIMEOUT_MS);
+                worker.onmessage = (e) => {
+                    if (resolved) return;
+                    clearTimeout(timerId);
+                    if (e.data.status === 'error') {
+                        fallback({ type: 'worker-message-error', error: e.data.error });
+                    } else {
+                        resolved = true;
+                        resolve(e.data.data || []);
+                    }
+                };
+                worker.onerror = (e) => {
+                    if (resolved) return;
+                    clearTimeout(timerId);
+                    fallback({ type: 'worker-onerror', error: e.message });
+                };
+
+                try {
+                    worker.postMessage(files);
+                } catch (err) {
+                    clearTimeout(timerId);
+                    fallback({ type: 'postMessage-failed', error: err.message });
+                }
+            });
+        };
         const showStatus = (message) => {
             if (message) {
                 statusContainer.textContent = message;
@@ -847,7 +907,11 @@
                 if (data.choices && data.choices.length > 0 && data.choices[0].message) {
                     const content = data.choices[0].message.content;
                     const textContent = Array.isArray(content)
-                        ? content.map(part => (typeof part === 'string' ? part : part.text || '')).join('\n')
+                        ? content.map(part => {
+                            if (typeof part === 'string') return part;
+                            if (part.type === 'text' && typeof part.text === 'string') return part.text;
+                            return '';
+                        }).join('\n')
                         : (content || '');
                     Logger.info('OpenAI API call successful', { model, responseLength: (textContent || '').length });
                     return textContent;
@@ -1069,53 +1133,40 @@
             loader.classList.remove('hidden');
             showStatus(CONFIG.STATUS_MESSAGES.PROCESSING_IMAGES);
 
-            worker.postMessage(imageFiles);
-
-            worker.onmessage = async function(e) {
-                if (e.data.status === 'error') {
-                    console.error("Erro no Web Worker:", e.data.error);
-                    conversationContainer.innerHTML = `<p class="text-red-600"><b>Ocorreu um erro ao processar as imagens.</b></p>`;
-                    loader.classList.add('hidden');
-                    showStatus(null);
-                    return;
-                }
-                
+            try {
+                const imageParts = await getImageParts(imageFiles);
                 showStatus(CONFIG.STATUS_MESSAGES.SENDING_TO_AI);
-                const imageParts = e.data.data;
                 const model = aiModelSelect.value;
                 const providerName = aiProviderSelect.value;
 
-                try {
-                    let initialUserContent;
-                    if (providerName === 'Google Gemini') {
-                        initialUserContent = { role: 'user', parts: [{ text: textPrompt }, ...imageParts.map(p => ({ inlineData: { mimeType: p.mimeType, data: p.data } }))] };
-                        conversationHistory.push(initialUserContent);
-                    } else if (providerName === 'OpenAI') {
-                        initialUserContent = { role: 'user', content: [{ type: 'text', text: textPrompt }, ...imageParts.map(p => ({ type: 'image_url', image_url: { url: p.fullDataUrl } }))] };
-                        conversationHistory.push(initialUserContent);
-                    }
-
-                    let responseText = '';
-                    if (providerName === 'Google Gemini') {
-                        responseText = await callGeminiAPI(apiKey, model, conversationHistory);
-                        conversationHistory.push({ role: 'model', parts: [{ text: responseText }] });
-                    } else if (providerName === 'OpenAI') {
-                        responseText = await callOpenAIAPI(apiKey, model, conversationHistory);
-                        conversationHistory.push({ role: 'assistant', content: responseText });
-                    }
-
-                    showStatus(null);
-                    displayConversationTurn(responseText, 'IA');
-                    followUpForm.classList.remove('hidden');
-
-                } catch (error) {
-                    console.error("Erro na chamada da API:", error);
-                    let friendlyMessage = ErrorHandler.handle(error);
-                    conversationContainer.innerHTML = `<p class="text-red-600"><b>${friendlyMessage}</b></p>`;
-                } finally {
-                    loader.classList.add('hidden');
+                let initialUserContent;
+                if (providerName === 'Google Gemini') {
+                    initialUserContent = { role: 'user', parts: [{ text: textPrompt }, ...imageParts.map(p => ({ inlineData: { mimeType: p.mimeType, data: p.data } }))] };
+                    conversationHistory.push(initialUserContent);
+                } else if (providerName === 'OpenAI') {
+                    initialUserContent = { role: 'user', content: [{ type: 'text', text: textPrompt }, ...imageParts.map(p => ({ type: 'image_url', image_url: { url: p.fullDataUrl } }))] };
+                    conversationHistory.push(initialUserContent);
                 }
-            };
+
+                let responseText = '';
+                if (providerName === 'Google Gemini') {
+                    responseText = await callGeminiAPI(apiKey, model, conversationHistory);
+                    conversationHistory.push({ role: 'model', parts: [{ text: responseText }] });
+                } else if (providerName === 'OpenAI') {
+                    responseText = await callOpenAIAPI(apiKey, model, conversationHistory);
+                    conversationHistory.push({ role: 'assistant', content: responseText });
+                }
+
+                showStatus(null);
+                displayConversationTurn(responseText, 'IA');
+                followUpForm.classList.remove('hidden');
+            } catch (error) {
+                console.error("Erro na chamada da API:", error);
+                let friendlyMessage = ErrorHandler.handle(error);
+                conversationContainer.innerHTML = `<p class="text-red-600"><b>${friendlyMessage}</b></p>`;
+            } finally {
+                loader.classList.add('hidden');
+            }
         });
 
         followUpForm.addEventListener('submit', async (event) => {
