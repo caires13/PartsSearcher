@@ -117,15 +117,11 @@
         <form id="part-form" class="space-y-8">
             
             <fieldset class="space-y-4">
-                <label class="text-lg font-semibold text-gray-800">1. Provedor de IA</label>
+                <label class="text-lg font-semibold text-gray-800">1. Configuração</label>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                        <label for="ai-provider" class="text-sm font-medium text-gray-700">Provedor</label>
-                        <select id="ai-provider" class="form-select mt-1"></select>
-                    </div>
-                    <div>
-                        <label for="ai-model" class="text-sm font-medium text-gray-700">Modelo</label>
-                        <select id="ai-model" class="form-select mt-1"></select>
+                        <label class="text-sm font-medium text-gray-700">Modelo</label>
+                        <input type="text" class="form-input mt-1" value="GPT-5" readonly>
                     </div>
                 </div>
                 <div id="api-key-container" class="relative"></div>
@@ -365,9 +361,11 @@
                     userMessage = error.message;
                 } else if (typeof DOMException !== 'undefined' && error instanceof DOMException) {
                     userMessage = CONFIG.ERROR_MESSAGES.WORKER_ERROR;
-                } else if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+                } else if (error?.name === 'AbortError' || /aborted|abort/i.test(error?.message || '')) {
+                    userMessage = 'Tempo de resposta esgotado. Tente novamente.';
+                } else if ((error.message || '').includes('Failed to fetch') || (error.message || '').includes('NetworkError')) {
                     userMessage = CONFIG.ERROR_MESSAGES.NETWORK_ERROR;
-                } else if (error.message.includes('API')) {
+                } else if ((error.message || '').includes('API')) {
                     userMessage = error.message;
                 }
                 
@@ -459,8 +457,9 @@
         const conversationContainer = document.getElementById('conversation-container');
         const responseTitle = document.getElementById('response-title');
         const loader = document.getElementById('loader');
-        const aiProviderSelect = document.getElementById('ai-provider');
-        const aiModelSelect = document.getElementById('ai-model');
+        // Simplified: single provider/model (OpenAI GPT-5)
+        const aiProviderSelect = null;
+        const aiModelSelect = null;
         const apiKeyContainer = document.getElementById('api-key-container');
         const saveApiKeyCheckbox = document.getElementById('save-api-key');
         const debugModeCheckbox = document.getElementById('debug-mode');
@@ -493,18 +492,8 @@
             'Posição na Máquina': 'Ex: Unidade de molha, cilindro de impressão'
         };
 
-        // Updated to latest models as of 2025
+        // Single provider configuration
         const apiProviders = {
-            "Google Gemini": {
-                models: ['gemini-2.5-pro', 'gemini-2.5-flash'],
-                keyName: 'geminiApiKey',
-                keyLabel: 'Chave da API Gemini'
-            },
-            "OpenAI": {
-                models: ['o3', 'o3-mini'],
-                keyName: 'openaiApiKey',
-                keyLabel: 'Chave da API OpenAI'
-            },
             "OpenAI GPT-5": {
                 models: ['gpt-5'],
                 keyName: 'openaiApiKey',
@@ -709,18 +698,16 @@
         };
 
         const updateUIForProvider = () => {
-            const providerName = aiProviderSelect.value;
+            const providerName = 'OpenAI GPT-5';
             const provider = apiProviders[providerName];
-            aiModelSelect.innerHTML = provider.models.map(model => `<option value="${model}">${model}</option>`).join('');
             apiKeyContainer.innerHTML = `
                 <div class="relative">
                     <label for="${provider.keyName}" class="text-sm font-medium text-gray-700 mt-2 block">${provider.keyLabel}</label>
-                    <input type="password" id="${provider.keyName}" class="form-input mt-1 pr-10">
+                    <input type="password" id="${provider.keyName}" class="form-input mt-1 pr-10" placeholder="sk-...">
                     <span id="api-key-status" class="absolute inset-y-0 right-0 top-6 pr-3 flex items-center text-sm leading-5"></span>
                 </div>
             `;
             const apiKeyInput = document.getElementById(provider.keyName);
-            
             let keyValue = '';
             if (saveApiKeyCheckbox.checked) {
                 keyValue = localStorage.getItem(provider.keyName) || '';
@@ -728,7 +715,6 @@
             apiKeyInput.value = keyValue;
             const debouncedValidate = debounce(validateApiKey, CONFIG.AUTO_SAVE_DELAY);
             debouncedValidate(keyValue, providerName);
-
             apiKeyInput.addEventListener('input', () => {
                 debouncedValidate(apiKeyInput.value, providerName);
                 if (saveApiKeyCheckbox.checked) {
@@ -797,72 +783,11 @@
         });
 
         async function callGeminiAPI(apiKey, model, history) {
-            const API_URL = `${CONFIG.API_ENDPOINTS.GEMINI}/models/${model}:generateContent?key=${apiKey}`;
+            const API_URL_V1 = `${CONFIG.API_ENDPOINTS.GEMINI}/models/${model}:generateContent?key=${apiKey}`;
+            const API_URL_V1BETA = `${CONFIG.API_ENDPOINTS.GEMINI.replace('/v1', '/v1beta')}/models/${model}:generateContent?key=${apiKey}`;
             
-            // Model-specific configurations
-            const generationConfig = {
-                temperature: 0.7,
-                maxOutputTokens: 4096
-            };
-            
-            // Optimize for specific models
-            if (model.includes('flash')) {
-                generationConfig.temperature = 0.5; // More focused for flash models
-            } else if (model.includes('2.5-pro')) {
-                generationConfig.temperature = 0.7; // Balanced for pro models
-                generationConfig.maxOutputTokens = 8192; // Higher token limit for pro models
-            }
-            
-            const requestBody = { 
-                contents: history,
-                generationConfig
-            };
-            
-            try {
-                Logger.debug('Calling Gemini API', { model, historyLength: history.length });
-                
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT_MS);
-                const response = await fetch(API_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(requestBody),
-                    signal: controller.signal
-                });
-                clearTimeout(timeoutId);
-                const data = await response.json(); 
-                
-                if (!response.ok) {
-                    Logger.error('Gemini API error', null, { status: response.status, data });
-                    let errorMessage = data?.error?.message || `HTTP error! status: ${response.status}`;
-                    
-                    // Handle model-specific errors
-                    if (response.status === 400 && data?.error?.message?.includes('model')) {
-                        errorMessage = `Modelo ${model} não está disponível. Tente outro modelo.`;
-                    } else if (response.status === 429) {
-                        errorMessage = 'Limite de requisições excedido. Aguarde um momento.';
-                    }
-                    
-                    throw new APIError(`Erro da API Gemini: ${errorMessage}`, response.status, 'Gemini', data);
-                }
-                
-                if (data.candidates && data.candidates.length > 0 && data.candidates[0].content && data.candidates[0].content.parts && data.candidates[0].content.parts.length > 0) {
-                    Logger.info('Gemini API call successful', { model, responseLength: data.candidates[0].content.parts[0].text.length });
-                    return data.candidates[0].content.parts[0].text;
-                } else {
-                    Logger.error('Unexpected Gemini API response', null, { data });
-                    if (data.promptFeedback && data.promptFeedback.blockReason) {
-                        throw new APIError(`A API Gemini bloqueou a resposta. Motivo: ${data.promptFeedback.blockReason}`, 400, 'Gemini', data);
-                    }
-                    throw new APIError("A API Gemini retornou uma resposta vazia ou malformada.", 500, 'Gemini', data);
-                }
-            } catch (error) {
-                if (error instanceof APIError) {
-                    throw error;
-                }
-                Logger.error('Gemini API call failed', error, { model, apiKey: apiKey.substring(0, 10) + '...' });
-                throw new APIError(`Erro na comunicação com a API Gemini: ${error.message}`, 0, 'Gemini');
-            }
+            // Temporarily disabled in simplified build
+            throw new APIError('Provedor Gemini desativado nesta versão simplificada.', 400, 'Gemini');
         }
 
         async function callOpenAIAPI(apiKey, model, history) {
@@ -890,7 +815,7 @@
 
             try {
                 Logger.debug('Calling OpenAI API', { model, historyLength: history.length });
-                
+
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT_MS);
                 const response = await fetch(API_URL, {
@@ -903,7 +828,7 @@
                     signal: controller.signal
                 });
                 clearTimeout(timeoutId);
-                const data = await response.json(); 
+                const data = await response.json().catch(() => ({})); 
                 
                 if (!response.ok) {
                     Logger.error('OpenAI API error', null, { status: response.status, data });
@@ -1009,7 +934,6 @@
             });
         });
 
-        aiProviderSelect.addEventListener('change', updateUIForProvider);
         addFieldBtn.addEventListener('click', () => addField(Object.keys(fieldOptions)[0]));
 
         saveApiKeyCheckbox.addEventListener('change', () => {
@@ -1017,8 +941,7 @@
             if (!saveApiKeyCheckbox.checked) {
                 Object.values(apiProviders).forEach(p => localStorage.removeItem(p.keyName));
             } else {
-                const providerName = aiProviderSelect.value;
-                const provider = apiProviders[providerName];
+                const provider = apiProviders['OpenAI GPT-5'];
                 const apiKeyInput = document.getElementById(provider.keyName);
                 if(apiKeyInput) localStorage.setItem(provider.keyName, apiKeyInput.value);
             }
@@ -1153,23 +1076,17 @@
             try {
                 const imageParts = await getImageParts(imageFiles);
                 showStatus(CONFIG.STATUS_MESSAGES.SENDING_TO_AI);
-                const model = aiModelSelect.value;
-                const providerName = aiProviderSelect.value;
+                const model = apiProviders['OpenAI GPT-5'].models[0];
+                const providerName = 'OpenAI GPT-5';
 
                 let initialUserContent;
-                if (providerName === 'Google Gemini') {
-                    initialUserContent = { role: 'user', parts: [{ text: textPrompt }, ...imageParts.map(p => ({ inlineData: { mimeType: p.mimeType, data: p.data } }))] };
-                    conversationHistory.push(initialUserContent);
-                } else if (providerName === 'OpenAI' || providerName === 'OpenAI GPT-5') {
+                if (providerName === 'OpenAI GPT-5') {
                     initialUserContent = { role: 'user', content: [{ type: 'text', text: textPrompt }, ...imageParts.map(p => ({ type: 'image_url', image_url: { url: p.fullDataUrl } }))] };
                     conversationHistory.push(initialUserContent);
                 }
 
                 let responseText = '';
-                if (providerName === 'Google Gemini') {
-                    responseText = await callGeminiAPI(apiKey, model, conversationHistory);
-                    conversationHistory.push({ role: 'model', parts: [{ text: responseText }] });
-                } else if (providerName === 'OpenAI' || providerName === 'OpenAI GPT-5') {
+                if (providerName === 'OpenAI GPT-5') {
                     responseText = await callOpenAIAPI(apiKey, model, conversationHistory);
                     conversationHistory.push({ role: 'assistant', content: responseText });
                 }
@@ -1196,17 +1113,12 @@
             loader.classList.remove('hidden');
             showStatus(CONFIG.STATUS_MESSAGES.AI_THINKING);
             
-            const providerName = aiProviderSelect.value;
-            const model = aiModelSelect.value;
+            const providerName = 'OpenAI GPT-5';
+            const model = apiProviders['OpenAI GPT-5'].models[0];
             const apiKey = document.getElementById(apiProviders[providerName].keyName).value.trim();
 
             try {
-                if (providerName === 'Google Gemini') {
-                    conversationHistory.push({ role: 'user', parts: [{ text: userText }] });
-                    const responseText = await callGeminiAPI(apiKey, model, conversationHistory);
-                    conversationHistory.push({ role: 'model', parts: [{ text: responseText }] });
-                    displayConversationTurn(responseText, 'IA');
-                } else if (providerName === 'OpenAI' || providerName === 'OpenAI GPT-5') {
+                if (providerName === 'OpenAI GPT-5') {
                     // Normalize user message as text content; server may return array or string
                     conversationHistory.push({ role: 'user', content: [{ type: 'text', text: userText }] });
                     const responseText = await callOpenAIAPI(apiKey, model, conversationHistory);
