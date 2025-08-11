@@ -78,7 +78,7 @@
             gap: 1rem;
             align-items: center;
             padding: 0.75rem 1rem;
-        }
+        }z
         .data-grid-row:nth-child(even) {
             background-color: #f9fafb;
         }
@@ -1129,9 +1129,9 @@
             loader.classList.remove('hidden');
             showStatus(CONFIG.STATUS_MESSAGES.AI_THINKING);
             
-            const providerName = getCurrentProviderName();
-            const model = apiProviders[providerName].models[0];
-            const apiKey = getApiKeyValue();
+            const providerName = 'OpenAI GPT-5';
+            const model = apiProviders['OpenAI GPT-5'].models[0];
+            const apiKey = document.getElementById(apiProviders[providerName].keyName).value.trim();
 
             try {
                 if (providerName === 'OpenAI GPT-5') {
