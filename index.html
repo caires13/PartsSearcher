@@ -915,12 +915,28 @@
             };
         };
 
+        // Provider helpers (single provider version)
+        const getCurrentProviderName = () => 'OpenAI GPT-5';
+        const getApiKeyValue = () => {
+            const provider = apiProviders[getCurrentProviderName()];
+            if (!provider) throw new ValidationError('Provedor não configurado.');
+            let input = document.getElementById(provider.keyName);
+            if (!input) {
+                // Try to render the UI then read again
+                updateUIForProvider();
+                input = document.getElementById(provider.keyName);
+            }
+            if (!input) {
+                throw new ValidationError('Campo de chave de API não foi inicializado. Recarregue a página.', 'apiKey');
+            }
+            return (input.value || '').trim();
+        };
+
         // --- Event Listeners and Initialization ---
         document.addEventListener('DOMContentLoaded', () => {
             // Initialize configuration from localStorage
             CONFIG.DEBUG_MODE = localStorage.getItem('debugMode') === 'true';
             
-            aiProviderSelect.innerHTML = Object.keys(apiProviders).map(p => `<option value="${p}">${p}</option>`).join('');
             if (localStorage.getItem('saveApiKeys') === 'true') {
                 saveApiKeyCheckbox.checked = true;
             }
@@ -1017,8 +1033,8 @@
             
             try {
                 // Comprehensive validation
-                const providerName = aiProviderSelect.value;
-                const apiKey = document.getElementById(apiProviders[providerName].keyName).value.trim();
+                const providerName = getCurrentProviderName();
+                const apiKey = getApiKeyValue();
                 const imageFiles = partImagesInput.files;
                 const hasData = Array.from(document.querySelectorAll('.custom-field-value')).some(input => input.value.trim() !== '');
                 
@@ -1113,9 +1129,9 @@
             loader.classList.remove('hidden');
             showStatus(CONFIG.STATUS_MESSAGES.AI_THINKING);
             
-            const providerName = 'OpenAI GPT-5';
-            const model = apiProviders['OpenAI GPT-5'].models[0];
-            const apiKey = document.getElementById(apiProviders[providerName].keyName).value.trim();
+            const providerName = getCurrentProviderName();
+            const model = apiProviders[providerName].models[0];
+            const apiKey = getApiKeyValue();
 
             try {
                 if (providerName === 'OpenAI GPT-5') {
